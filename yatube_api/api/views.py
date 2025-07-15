@@ -1,59 +1,50 @@
 from django.shortcuts import get_object_or_404
-from rest_framework import filters, permissions, viewsets
+from rest_framework import filters, permissions, viewsets, mixins
 from rest_framework.pagination import LimitOffsetPagination
 
-from posts.models import Follow, Group, Post
-from .permissions import OwnerOrReadOnly, ReadOnly
+from posts.models import Group, Post
+from .permissions import IsAuthenticatedAuthorOrReadOnly
 from .serializers import (CommentSerializer, FollowSerializer, GroupSerializer,
                           PostSerializer)
 
 
-class BaseAuthorViewSet(viewsets.ModelViewSet):
-    """
-    Базовый вьюсет с общей логикой:
-    - для действия retrieve только ReadOnly,
-    - для остальных — стандартные permission_classes.
-    """
-    permission_classes = (OwnerOrReadOnly,)
+class PostViewSet(viewsets.ModelViewSet):
+    """Вьюсет для постов."""
+    queryset = Post.objects.all()
+    serializer_class = PostSerializer
+    permission_classes = (IsAuthenticatedAuthorOrReadOnly,)
+    pagination_class = LimitOffsetPagination
 
     def perform_create(self, serializer):
         serializer.save(author=self.request.user)
 
-    def get_permissions(self):
-        if self.action == 'retrieve':
-            return (ReadOnly(),)
-        return super().get_permissions()
 
-
-class PostViewSet(BaseAuthorViewSet):
-    """Вьюшка для постов."""
-    queryset = Post.objects.all()
-    serializer_class = PostSerializer
-    pagination_class = LimitOffsetPagination
-
-
-class CommentViewSet(BaseAuthorViewSet):
-    """Вьюшка для комментариев"""
+class CommentViewSet(viewsets.ModelViewSet):
+    """Вьюсет для комментариев"""
     serializer_class = CommentSerializer
+    permission_classes = (IsAuthenticatedAuthorOrReadOnly,)
+
+    def get_post(self):
+        return get_object_or_404(Post, pk=self.kwargs['post_id'])
 
     def get_queryset(self):
-        post = get_object_or_404(Post, pk=self.kwargs['post_id'])
-        return post.comments.all()
+        return self.get_post().comments.all()
 
     def perform_create(self, serializer):
-        post = get_object_or_404(Post, pk=self.kwargs['post_id'])
-        serializer.save(author=self.request.user, post=post)
+        serializer.save(author=self.request.user, post=self.get_post())
 
 
 class GroupViewSet(viewsets.ReadOnlyModelViewSet):
-    """Вьюшка для групп."""
+    """Вьюсет для групп."""
     queryset = Group.objects.all()
     serializer_class = GroupSerializer
     permission_classes = (permissions.AllowAny,)
 
 
-class FollowViewSet(BaseAuthorViewSet):
-    """Вьюшка для фоловинга."""
+class FollowViewSet(mixins.ListModelMixin,
+                    mixins.CreateModelMixin,
+                    viewsets.GenericViewSet):
+    """Вьюсет для фоловинга (только GET и POST)."""
     serializer_class = FollowSerializer
     permission_classes = (permissions.IsAuthenticated,)
     filter_backends = (filters.SearchFilter,)
@@ -63,4 +54,4 @@ class FollowViewSet(BaseAuthorViewSet):
         serializer.save(user=self.request.user)
 
     def get_queryset(self):
-        return Follow.objects.filter(user=self.request.user)
+        return self.request.user.follower.all()
